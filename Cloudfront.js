@@ -1,16 +1,58 @@
 const https = require('https');
 
+/**
+ * Example code for a Lambda function that can proxy requests, extract an Arkose Labs token from the
+ * request and verify the token on the Cloudfront CDN layer
+ *
+ * This requires the following environment variables being setup for the Cloudflare Worker
+ * @param {string} privateKey The Arkose Labs private key to use for verification
+ * @param {string} errorUrl A url to redirect to if there has been an error
+ * @param {string} tokenIdentifier The property name for the body / cookie that contains the Arkose Labs token
+ * @param {string} tokenMethod The storage method of the Arkose Labs token, this can be either "body" or "cookie".
+ * @param {boolean} failOpen A boolean string to indicate if the current session should fail
+ * open if there is a problem with the Arkose Labs platform.
+ * @param {integer} verifyMaxRetryCount A numeric string to represent the number of times we should retry
+ * Arkose Labs verification if there is an issue.
+ * @param {string} verifyApiUrl A customer's specific url used for the verification call (if setup)
+ * default is verify-api.arkoselabs.com
+ * @param {Object} redirectResponse The redirect callback if an error occurs
+ */
+const privateKey  = '1111111-1111-1111-1111-11111111111';
+const errorUrl = 'https://www.arkoselabs.com';
+const tokenIdentifier = 'arkose-token';
+const tokenMethod = 'body';
+const failOpen = true;
+const verifyMaxRetryCount = 3;
+const verifyApiUrl = 'verify-api.arkoselabs.com';
+const redirectResponse = {
+    status: '301',
+    statusDescription: 'Token Error',
+    headers: {
+      'location': [{
+        key: 'Location',
+        value: errorUrl,
+      }],
+
+    },
+};
+
 const getTokenCookie = (request, cookieKey) => {
   //only needed if using Cookies
   return null;
 };
 
+/**
+ * Sends token to Arkose Labs Verify endpoint and returns the verify payload
+ * @param  {Object} body An object containing both the private key and session token to validate
+ * @param  {string} verifyApiUrl The URL of the verify endpoint to use
+ * @return {Object} The verify payload returned from the Arkose Lbas endpoint
+ */
 function postRequest(body) {
   const options = {
-    hostname: 'verify-api.arkoselabs.com',
+    hostname: verifyApiUrl,
     path: '/api/v4/verify/',
     method: 'POST',
-    port: 443, // 
+    port: 443, 
     headers: {
       'Content-Type': 'application/json',
     },
@@ -42,12 +84,16 @@ function postRequest(body) {
   });
 }
 
+/**
+ * Sends request to Arkose Labs Status endpoint and returns the status object
+ * @return {Object} An object representation of the current Arkose Labs platform status
+ */
 function getStatus() {
   const options = {
     hostname: 'status.arkoselabs.com',
     path: '/api/v2/status.json',
     method: 'GET',
-    port: 443, // 
+    port: 443,  
   };
 
   return new Promise((resolve, reject) => {
@@ -73,18 +119,28 @@ function getStatus() {
   });
 }
 
-const getTokenHeader = (event, headerKey) => {
+/**
+* Returns a specified body value from a request
+* @param  {Object} event The request to fetch the body value from
+* @param  {string} bodyKey The body key to extract the value for
+  @return {string} the body value of the specified key
+*/
+const getTokenBody = (event, bodyKey) => {
    let request = event.Records[0].cf.request;
    let body = request.body;
    let data = JSON.stringify(body["data"]);
    let decodedData = Buffer.from(data,'base64').toString('ascii');
    let parsedData = JSON.parse(decodedData);
-  return parsedData.token;
+  return parsedData[bodyKey];
 };
 
+/**
+ * Checks the current status of the Arkose Labs platform
+ * @return {boolean} A boolean representation of the current Arkose Labs platform status,
+ * true means the platform is stable, false signifies an outage.
+ */
 const checkArkoseStatus = async () => {
   try {
-
     const healthJson = await getStatus();
     const status = healthJson.status.indicator;
     return !(status === 'critical');
@@ -93,6 +149,16 @@ const checkArkoseStatus = async () => {
   }
 };
 
+/**
+ * Verifies an arkose token, including retry and platform status logic
+ * @param  {string} token The Arkose Labs session token value
+ * @param  {string} privateKey The Arkose Labs private key
+ * @param  {string} retryMaxCount The number of retries that should be performed if there is an issue
+ * @param  {string} [currentRetry=0] The count of the current number of retries being performed
+ * @return {Object} status The current verification and Arkose Labs platform status
+ * @return {boolean} status.verified Has the token verified successfully
+ * @return {boolean} statis.arkoseStatus The current status of the Arkose Labs platform
+ */
 const verifyArkoseToken = async (
   token,
   privateKey,
@@ -129,41 +195,24 @@ const verifyArkoseToken = async (
   }
 };
 
-
+/**
+ * Returns an Arkose Labs token from the current request
+ * @param  {Object} request The request to fetch the header from
+ * @param  {string} tokenMethod The method to use for extracting the Arkose Labs token, this has two
+ * potential values "cookie" and "body"
+ * @param  {string} tokenIdentifier An identifier string of the property the token is stored in
+ * @return {string} the specified Arkose Labs token
+ */
 const getArkoseToken = (request, tokenMethod, tokenIdentifier) => {
-  
   const tokenFunction =
-    tokenMethod === 'cookie' ? getTokenCookie : getTokenHeader;
+    tokenMethod === 'cookie' ? getTokenCookie : getTokenBody;
   return tokenFunction(request, tokenIdentifier);
 };
 
-
 exports.handler = async (event, context, callback) => {
-
-    const privateKey  = '1111111-1111-1111-1111-11111111';
-    const errorUrl = 'https://www.arkoselabs.com';
-    const tokenIdentifier = 'arkose-token';
-    const tokenMethod = 'header';
-    const failOpen = true;
-    const verifyMaxRetryCount = 3;
-    
-    const redirectResponse = {
-        status: '301',
-        statusDescription: 'Token Error',
-        headers: {
-          'location': [{
-            key: 'Location',
-            value: errorUrl,
-          }],
-
-        },
-    };
-    
-
-    // extracts the Arkose Labs token from the request
-    
+      
+    // extracts the Arkose Labs token from the request 
     const arkoseToken = getArkoseToken(event, tokenMethod, tokenIdentifier);
-
 
     // if an Arkose Labs token is found, process it
     if (arkoseToken && arkoseToken !== '') {
