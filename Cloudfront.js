@@ -17,10 +17,10 @@ const https = require('https');
  * default is verify-api.arkoselabs.com
  * @param {Object} redirectResponse The redirect callback if an error occurs
  */
-const privateKey  = '1111111-1111-1111-1111-11111111111';
+const privateKey  = '11111111-1111-1111-1111-111111111';
 const errorUrl = 'https://www.arkoselabs.com';
 const tokenIdentifier = 'arkose-token';
-const tokenMethod = 'body';
+const tokenMethod = 'cookie';
 const failOpen = true;
 const verifyMaxRetryCount = 3;
 const verifyApiUrl = 'verify-api.arkoselabs.com';
@@ -36,8 +36,25 @@ const redirectResponse = {
     },
 };
 
-const getTokenCookie = (request, cookieKey) => {
-  //only needed if using Cookies
+/**
+ * Returns a specified cookie value from request object
+ * @param  {object} event The event to extract the cookie value from
+ * @param  {string} cookieKey The cookie key to extract the value for
+ * @return {string} the cookie value of the specified key
+ */
+const getTokenCookie = (event, cookieKey) => {
+  const cookieString = event.Records[0].cf.request.headers.cookie;
+  console.log(cookieString)
+  if (cookieString) {
+    const allCookies = cookieString[0].value.split('; ');
+    const targetCookie = allCookies.find((cookie) =>
+      cookie.includes(cookieKey)
+    );
+    if (targetCookie) {
+      const [, value] = targetCookie.split(`${cookieKey}=`);
+      return value;
+    }
+  }
   return null;
 };
 
@@ -153,8 +170,8 @@ const checkArkoseStatus = async () => {
  * Verifies an arkose token, including retry and platform status logic
  * @param  {string} token The Arkose Labs session token value
  * @param  {string} privateKey The Arkose Labs private key
- * @param  {string} retryMaxCount The number of retries that should be performed if there is an issue
- * @param  {string} [currentRetry=0] The count of the current number of retries being performed
+ * @param  {integer} retryMaxCount The number of retries that should be performed if there is an issue
+ * @param  {integer} [currentRetry=0] The count of the current number of retries being performed
  * @return {Object} status The current verification and Arkose Labs platform status
  * @return {boolean} status.verified Has the token verified successfully
  * @return {boolean} statis.arkoseStatus The current status of the Arkose Labs platform
@@ -197,16 +214,16 @@ const verifyArkoseToken = async (
 
 /**
  * Returns an Arkose Labs token from the current request
- * @param  {Object} request The request to fetch the header from
+ * @param  {Object} event The request to fetch the header from
  * @param  {string} tokenMethod The method to use for extracting the Arkose Labs token, this has two
  * potential values "cookie" and "body"
  * @param  {string} tokenIdentifier An identifier string of the property the token is stored in
  * @return {string} the specified Arkose Labs token
  */
-const getArkoseToken = (request, tokenMethod, tokenIdentifier) => {
+const getArkoseToken = (event, tokenMethod, tokenIdentifier) => {
   const tokenFunction =
     tokenMethod === 'cookie' ? getTokenCookie : getTokenBody;
-  return tokenFunction(request, tokenIdentifier);
+  return tokenFunction(event, tokenIdentifier);
 };
 
 exports.handler = async (event, context, callback) => {
